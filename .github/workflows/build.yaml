@@ -1,4 +1,4 @@
-name: Build
+name: Build and Analyze with SonarQube
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build
+    name: Build and Analyze
     runs-on: windows-latest
 
     steps:
@@ -15,26 +15,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v1
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v3
         with:
-            java-version: 17
+          dotnet-version: '8.0.x'
 
-
-      - name: Cache SonarQube packages
-        uses: actions/cache@v3
+      - name: Set up Java 17 for SonarScanner
+        uses: actions/setup-java@v3
         with:
-          path: ~/.sonar/cache
-          key: ${{ runner.os }}-sonar
-          restore-keys: ${{ runner.os }}-sonar
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Cache SonarQube scanner
-        id: cache-sonar-scanner
         uses: actions/cache@v3
         with:
-          path: ./.sonar/scanner
+          path: .\.sonar\scanner
           key: ${{ runner.os }}-sonar-scanner
-          restore-keys: ${{ runner.os }}-sonar-scanner
 
       - name: Install SonarQube scanner
         if: steps.cache-sonar-scanner.outputs.cache-hit != 'true'
@@ -43,11 +39,26 @@ jobs:
           New-Item -Path .\.sonar\scanner -ItemType Directory -Force
           dotnet tool update dotnet-sonarscanner --tool-path .\.sonar\scanner
 
-      - name: Build and analyze
+      - name: Install coverlet collector
+        run: dotnet add SonarDemo.Tests/SonarDemo.Tests.csproj package coverlet.collector
+
+      - name: Begin SonarScanner
+        shell: powershell
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .\.sonar\scanner\dotnet-sonarscanner begin /k:"SonarGit" `
+            /d:sonar.host.url="${{ secrets.SONAR_HOST_URL }}" `
+            /d:sonar.login="${{ secrets.SONAR_TOKEN }}" `
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.cobertura.xml"
+
+      - name: Build project
+        run: dotnet build
+
+      - name: Run tests with coverage
+        run: dotnet test SonarDemo.Tests/SonarDemo.Tests.csproj --collect:"XPlat Code Coverage"
+
+      - name: End SonarScanner
         shell: powershell
         run: |
-          .\.sonar\scanner\dotnet-sonarscanner begin /k:"SonarGit" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="${{ secrets.SONAR_HOST_URL }}"
-          dotnet build
           .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
